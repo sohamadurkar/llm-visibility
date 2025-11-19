@@ -1,22 +1,22 @@
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
+*.sqlite3
 
-# Virtual environment
+# Virtual env
 .venv/
+env/
 venv/
 
-# IDE
-.vscode/
-.idea/
-
-# Data
-data/*.db
-data/*.sqlite
-data/*.sqlite3
-
-# Reports
+# Local data & reports
+data/
 reports/
+prompt_packs/
+
+# VS Code
+.vscode/
 
 # Environment variables
 .env

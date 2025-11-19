@@ -22,6 +22,9 @@ from app.services.prompt_generator import (
     generate_prompt_pack_for_product,
     save_prompt_pack_to_file,
 )
+from app.services.google_prompt_generator import (
+    generate_google_prompt_pack_for_product,
+)
 from app.services.visibility_report import (
     fetch_page_html_via_scraperapi,
     build_page_snapshot,
@@ -31,7 +34,7 @@ from app.services.visibility_report import (
 
 load_dotenv()
 
-app = FastAPI(title="LLM Visibility API", version="0.3.1")
+app = FastAPI(title="LLM Visibility API", version="0.4.0")
 
 
 # --- DB Session Dependency ---
@@ -125,6 +128,20 @@ class GeneratePromptPackResponse(BaseModel):
     file_path: str
 
 
+class GenerateGooglePromptPackRequest(BaseModel):
+    product_id: int
+    num_prompts: int = 50
+    pack_id: Optional[str] = None
+    name: Optional[str] = None
+    category: Optional[str] = None  # logical product/category tag
+
+
+class GenerateGooglePromptPackResponse(BaseModel):
+    pack_id: str
+    num_prompts: int
+    file_path: str
+
+
 class VisibilityReportRequest(BaseModel):
     product_id: int
     model: Optional[str] = "gpt-4.1"
@@ -166,6 +183,7 @@ async def analyze_website(payload: AnalyzeRequest, db: Session = Depends(get_db)
 
     soup = BeautifulSoup(html, "lxml")
 
+    # Derive title
     page_title = None
     og_title = soup.find("meta", property="og:title")
     if og_title and og_title.get("content"):
@@ -177,6 +195,7 @@ async def analyze_website(payload: AnalyzeRequest, db: Session = Depends(get_db)
         if h1 and h1.get_text():
             page_title = h1.get_text().strip()
 
+    # Detect Product JSON-LD
     has_product_jsonld = False
     for tag in soup.find_all("script", type="application/ld+json"):
         try:
@@ -202,6 +221,7 @@ async def analyze_website(payload: AnalyzeRequest, db: Session = Depends(get_db)
             has_product_jsonld = True
             break
 
+    # Upsert Website & Product
     website = db.query(Website).filter(Website.domain == domain).one_or_none()
     if not website:
         website = Website(domain=domain)
@@ -367,6 +387,9 @@ def run_llm_batch(payload: LLMRunBatchRequest, db: Session = Depends(get_db)):
 
 @app.post("/generate-prompt-pack", response_model=GeneratePromptPackResponse)
 def generate_prompt_pack(payload: GeneratePromptPackRequest, db: Session = Depends(get_db)):
+    """
+    Source A: LLM-generated high-intent prompts (behavioural categories).
+    """
     product = db.query(Product).filter(Product.id == payload.product_id).one_or_none()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -386,6 +409,41 @@ def generate_prompt_pack(payload: GeneratePromptPackRequest, db: Session = Depen
     file_path = save_prompt_pack_to_file(pack)
 
     return GeneratePromptPackResponse(
+        pack_id=pack["id"],
+        num_prompts=len(pack.get("prompts", [])),
+        file_path=file_path,
+    )
+
+
+@app.post("/generate-google-prompt-pack", response_model=GenerateGooglePromptPackResponse)
+def generate_google_prompt_pack(payload: GenerateGooglePromptPackRequest, db: Session = Depends(get_db)):
+    """
+    Source B: Google-seeded high-intent prompts (Scrapingdog 'people also ask').
+    """
+    product = db.query(Product).filter(Product.id == payload.product_id).one_or_none()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    inferred_category = payload.category or None
+
+    try:
+        pack = generate_google_prompt_pack_for_product(
+            product_id=product.id,
+            product_title=product.title or product.url,
+            product_url=product.url,
+            category=inferred_category,
+            num_prompts=payload.num_prompts,
+            pack_id=payload.pack_id,
+            name=payload.name,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating Google prompt pack: {e}")
+
+    file_path = save_prompt_pack_to_file(pack)
+
+    return GenerateGooglePromptPackResponse(
         pack_id=pack["id"],
         num_prompts=len(pack.get("prompts", [])),
         file_path=file_path,
