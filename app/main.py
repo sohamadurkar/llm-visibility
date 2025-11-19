@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, HttpUrl
 from sqlalchemy.orm import Session
@@ -126,6 +126,7 @@ class GeneratePromptPackResponse(BaseModel):
     pack_id: str
     num_prompts: int
     file_path: str
+    download_url: str
 
 
 class GenerateGooglePromptPackRequest(BaseModel):
@@ -140,6 +141,7 @@ class GenerateGooglePromptPackResponse(BaseModel):
     pack_id: str
     num_prompts: int
     file_path: str
+    download_url: str
 
 
 class VisibilityReportRequest(BaseModel):
@@ -152,6 +154,7 @@ class VisibilityReportResponse(BaseModel):
     model_used: str
     report_markdown: str
     file_path: str
+    download_url: str
 
 
 # --- Endpoints ---
@@ -386,7 +389,7 @@ def run_llm_batch(payload: LLMRunBatchRequest, db: Session = Depends(get_db)):
 
 
 @app.post("/generate-prompt-pack", response_model=GeneratePromptPackResponse)
-def generate_prompt_pack(payload: GeneratePromptPackRequest, db: Session = Depends(get_db)):
+def generate_prompt_pack(payload: GeneratePromptPackRequest, db: Session = Depends(get_db), request: Request = None,):
     """
     Source A: LLM-generated high-intent prompts (behavioural categories).
     """
@@ -407,16 +410,19 @@ def generate_prompt_pack(payload: GeneratePromptPackRequest, db: Session = Depen
     )
 
     file_path = save_prompt_pack_to_file(pack)
+    base_url = str(request.base_url).rstrip("/")
+    download_url = f"{base_url}/download/prompt-pack/{pack['id']}"
 
     return GeneratePromptPackResponse(
         pack_id=pack["id"],
         num_prompts=len(pack.get("prompts", [])),
         file_path=file_path,
+        download_url=download_url,
     )
 
 
 @app.post("/generate-google-prompt-pack", response_model=GenerateGooglePromptPackResponse)
-def generate_google_prompt_pack(payload: GenerateGooglePromptPackRequest, db: Session = Depends(get_db)):
+def generate_google_prompt_pack(payload: GenerateGooglePromptPackRequest, db: Session = Depends(get_db), request: Request = None,):
     """
     Source B: Google-seeded high-intent prompts (Scrapingdog 'people also ask').
     """
@@ -442,16 +448,19 @@ def generate_google_prompt_pack(payload: GenerateGooglePromptPackRequest, db: Se
         raise HTTPException(status_code=500, detail=f"Error generating Google prompt pack: {e}")
 
     file_path = save_prompt_pack_to_file(pack)
+    base_url = str(request.base_url).rstrip("/")
+    download_url = f"{base_url}/download/prompt-pack/{pack['id']}"
 
     return GenerateGooglePromptPackResponse(
         pack_id=pack["id"],
         num_prompts=len(pack.get("prompts", [])),
         file_path=file_path,
+        download_url=download_url,
     )
 
 
 @app.post("/visibility-report", response_model=VisibilityReportResponse)
-async def visibility_report(payload: VisibilityReportRequest, db: Session = Depends(get_db)):
+async def visibility_report(payload: VisibilityReportRequest, db: Session = Depends(get_db), request: Request = None,):
     product = db.query(Product).filter(Product.id == payload.product_id).one_or_none()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -512,6 +521,9 @@ async def visibility_report(payload: VisibilityReportRequest, db: Session = Depe
 
     try:
         file_path = save_report_markdown_to_file(product.id, report_md)
+        base_url = str(request.base_url).rstrip("/")
+        filename = os.path.basename(file_path)
+        download_url = f"{base_url}/download/report/{filename}"
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error saving report: {e}")
 
@@ -520,4 +532,5 @@ async def visibility_report(payload: VisibilityReportRequest, db: Session = Depe
         model_used=payload.model,
         report_markdown=report_md,
         file_path=file_path,
+        download_url=download_url,
     )
